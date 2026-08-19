@@ -1,0 +1,13 @@
+{
+  "primary_model": "Organika/sdxl-detector",
+  "secondary_model": "umm-maybe/AI-image-detector",
+  "architecture": "Ensemble (ViT + ResNet) -- AI-generated image detection",
+  "dataset": "DALL-E / Stable Diffusion / Midjourney / ChatGPT images + real photos",
+  "primary_weight": 0.57,
+  "secondary_weight": 0.43,
+  "detection_threshold": 30.0,
+  "labels": [
+    "AI_GENERATED",
+    "REAL"
+  ]
+}

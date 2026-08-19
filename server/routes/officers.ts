@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import pool from "../db";
+import { query, insert } from "../db";
 import { asyncHandler, ApiError } from "../middleware/errorHandler";
 import { Officer, ApiResponse } from "@shared/types";
 
@@ -10,26 +10,15 @@ router.get(
   "/",
   asyncHandler(async (req: Request, res: Response) => {
     const { specialization, active } = req.query;
-    let query = "SELECT * FROM officers WHERE 1=1";
+    let sql = "SELECT * FROM officers WHERE 1=1";
     const params: any[] = [];
-    let paramCount = 1;
 
-    if (specialization) {
-      query += ` AND specialization = $${paramCount++}`;
-      params.push(specialization);
-    }
-    if (active !== undefined) {
-      query += ` AND active = $${paramCount++}`;
-      params.push(active === "true");
-    }
+    if (specialization) { sql += " AND specialization = ?"; params.push(specialization); }
+    if (active !== undefined) { sql += " AND active = ?"; params.push(active === "true" ? 1 : 0); }
+    sql += " ORDER BY name";
 
-    query += " ORDER BY name";
-
-    const result = await pool.query(query, params);
-    const response: ApiResponse<Officer[]> = {
-      success: true,
-      data: result.rows as Officer[],
-    };
+    const rows = await query<Officer>(sql, params);
+    const response: ApiResponse<Officer[]> = { success: true, data: rows };
     res.json(response);
   })
 );
@@ -39,19 +28,13 @@ router.get(
   "/:officerId",
   asyncHandler(async (req: Request, res: Response) => {
     const { officerId } = req.params;
+    const rows = await query<Officer>(
+      "SELECT * FROM officers WHERE officer_id = ?",
+      [officerId]
+    );
+    if (rows.length === 0) throw new ApiError(404, `Officer ${officerId} not found`);
 
-    const result = await pool.query("SELECT * FROM officers WHERE officer_id = $1", [
-      officerId,
-    ]);
-
-    if (result.rows.length === 0) {
-      throw new ApiError(404, `Officer ${officerId} not found`);
-    }
-
-    const response: ApiResponse<Officer> = {
-      success: true,
-      data: result.rows[0] as Officer,
-    };
+    const response: ApiResponse<Officer> = { success: true, data: rows[0] };
     res.json(response);
   })
 );
@@ -62,25 +45,26 @@ router.post(
   asyncHandler(async (req: Request, res: Response) => {
     const { name, specialization, email, phone, location, experience_years } = req.body;
 
-    if (!name || !email) {
-      throw new ApiError(400, "Name and email are required");
-    }
+    if (!name || !email) throw new ApiError(400, "Name and email are required");
 
     // Generate officer ID
-    const officerCountResult = await pool.query("SELECT COUNT(*) as count FROM officers");
-    const officerNumber = (officerCountResult.rows[0].count as number) + 1;
+    const countRows = await query<{ count: number }>("SELECT COUNT(*) as count FROM officers");
+    const officerNumber = Number(countRows[0].count) + 1;
     const officer_id = `OFF-${String(officerNumber).padStart(4, "0")}`;
 
-    const result = await pool.query(
+    await insert(
       `INSERT INTO officers (officer_id, name, specialization, email, phone, location, experience_years, success_rate)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 0)
-       RETURNING *`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
       [officer_id, name, specialization || null, email, phone || null, location || null, experience_years || 0]
     );
 
+    const rows = await query<Officer>(
+      "SELECT * FROM officers WHERE officer_id = ?",
+      [officer_id]
+    );
     const response: ApiResponse<Officer> = {
       success: true,
-      data: result.rows[0] as Officer,
+      data: rows[0],
       message: "Officer created successfully",
     };
     res.status(201).json(response);
@@ -96,63 +80,31 @@ router.put(
 
     const updates: string[] = [];
     const values: any[] = [];
-    let paramCount = 1;
 
-    if (name !== undefined) {
-      updates.push(`name = $${paramCount++}`);
-      values.push(name);
-    }
-    if (specialization !== undefined) {
-      updates.push(`specialization = $${paramCount++}`);
-      values.push(specialization);
-    }
-    if (email !== undefined) {
-      updates.push(`email = $${paramCount++}`);
-      values.push(email);
-    }
-    if (phone !== undefined) {
-      updates.push(`phone = $${paramCount++}`);
-      values.push(phone);
-    }
-    if (location !== undefined) {
-      updates.push(`location = $${paramCount++}`);
-      values.push(location);
-    }
-    if (experience_years !== undefined) {
-      updates.push(`experience_years = $${paramCount++}`);
-      values.push(experience_years);
-    }
-    if (caseload !== undefined) {
-      updates.push(`caseload = $${paramCount++}`);
-      values.push(caseload);
-    }
-    if (success_rate !== undefined) {
-      updates.push(`success_rate = $${paramCount++}`);
-      values.push(success_rate);
-    }
-    if (active !== undefined) {
-      updates.push(`active = $${paramCount++}`);
-      values.push(active);
-    }
+    if (name !== undefined)             { updates.push("name = ?");             values.push(name); }
+    if (specialization !== undefined)   { updates.push("specialization = ?");   values.push(specialization); }
+    if (email !== undefined)            { updates.push("email = ?");            values.push(email); }
+    if (phone !== undefined)            { updates.push("phone = ?");            values.push(phone); }
+    if (location !== undefined)         { updates.push("location = ?");         values.push(location); }
+    if (experience_years !== undefined) { updates.push("experience_years = ?"); values.push(experience_years); }
+    if (caseload !== undefined)         { updates.push("caseload = ?");         values.push(caseload); }
+    if (success_rate !== undefined)     { updates.push("success_rate = ?");     values.push(success_rate); }
+    if (active !== undefined)           { updates.push("active = ?");           values.push(active ? 1 : 0); }
 
-    if (updates.length === 0) {
-      throw new ApiError(400, "No fields to update");
-    }
+    if (updates.length === 0) throw new ApiError(400, "No fields to update");
 
     values.push(officerId);
+    await query(`UPDATE officers SET ${updates.join(", ")} WHERE officer_id = ?`, values);
 
-    const result = await pool.query(
-      `UPDATE officers SET ${updates.join(", ")} WHERE officer_id = $${paramCount} RETURNING *`,
-      values
+    const rows = await query<Officer>(
+      "SELECT * FROM officers WHERE officer_id = ?",
+      [officerId]
     );
-
-    if (result.rows.length === 0) {
-      throw new ApiError(404, `Officer ${officerId} not found`);
-    }
+    if (rows.length === 0) throw new ApiError(404, `Officer ${officerId} not found`);
 
     const response: ApiResponse<Officer> = {
       success: true,
-      data: result.rows[0] as Officer,
+      data: rows[0],
       message: "Officer updated successfully",
     };
     res.json(response);
@@ -165,21 +117,16 @@ router.get(
   asyncHandler(async (req: Request, res: Response) => {
     const { officerId } = req.params;
 
-    const result = await pool.query(
-      `SELECT o.*, 
-        (SELECT COUNT(*) FROM case_assignments WHERE officer_id = $1 AND status = 'Active') as active_cases
-       FROM officers o WHERE o.officer_id = $1`,
-      [officerId]
+    const rows = await query(
+      `SELECT o.*,
+        (SELECT COUNT(*) FROM case_assignments WHERE officer_id = ? AND status = 'Active') as active_cases
+       FROM officers o WHERE o.officer_id = ?`,
+      [officerId, officerId]
     );
 
-    if (result.rows.length === 0) {
-      throw new ApiError(404, `Officer ${officerId} not found`);
-    }
+    if (rows.length === 0) throw new ApiError(404, `Officer ${officerId} not found`);
 
-    const response: ApiResponse<any> = {
-      success: true,
-      data: result.rows[0],
-    };
+    const response: ApiResponse<any> = { success: true, data: rows[0] };
     res.json(response);
   })
 );

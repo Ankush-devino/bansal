@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import pool from "../db";
+import { query, insert } from "../db";
 import { asyncHandler, ApiError } from "../middleware/errorHandler";
 import { Case, ApiResponse } from "@shared/types";
 
@@ -10,19 +10,16 @@ router.get(
   "/",
   asyncHandler(async (req: Request, res: Response) => {
     const status = req.query.status as string;
-    let query = "SELECT * FROM cases ORDER BY created_date DESC";
+    let sql = "SELECT * FROM cases ORDER BY created_date DESC";
     const params: any[] = [];
 
     if (status) {
-      query = "SELECT * FROM cases WHERE status = $1 ORDER BY created_date DESC";
+      sql = "SELECT * FROM cases WHERE status = ? ORDER BY created_date DESC";
       params.push(status);
     }
 
-    const result = await pool.query(query, params);
-    const response: ApiResponse<Case[]> = {
-      success: true,
-      data: result.rows as Case[],
-    };
+    const rows = await query<Case>(sql, params);
+    const response: ApiResponse<Case[]> = { success: true, data: rows };
     res.json(response);
   })
 );
@@ -32,17 +29,11 @@ router.get(
   "/:caseId",
   asyncHandler(async (req: Request, res: Response) => {
     const { caseId } = req.params;
+    const rows = await query<Case>("SELECT * FROM cases WHERE case_id = ?", [caseId]);
 
-    const result = await pool.query("SELECT * FROM cases WHERE case_id = $1", [caseId]);
+    if (rows.length === 0) throw new ApiError(404, `Case ${caseId} not found`);
 
-    if (result.rows.length === 0) {
-      throw new ApiError(404, `Case ${caseId} not found`);
-    }
-
-    const response: ApiResponse<Case> = {
-      success: true,
-      data: result.rows[0] as Case,
-    };
+    const response: ApiResponse<Case> = { success: true, data: rows[0] };
     res.json(response);
   })
 );
@@ -53,41 +44,32 @@ router.post(
   asyncHandler(async (req: Request, res: Response) => {
     const { title, description, priority, assigned_to, created_by } = req.body;
 
-    if (!title) {
-      throw new ApiError(400, "Title is required");
-    }
+    if (!title) throw new ApiError(400, "Title is required");
 
     // Generate case ID
-    const caseIdResult = await pool.query(
-      "SELECT COUNT(*) as count FROM cases WHERE created_date >= CURRENT_DATE"
+    const countRows = await query<{ count: number }>(
+      "SELECT COUNT(*) as count FROM cases WHERE DATE(created_date) = CURDATE()"
     );
-    const caseNumber = (caseIdResult.rows[0].count as number) + 1;
+    const caseNumber = Number(countRows[0].count) + 1;
     const case_id = `CASE-${new Date().getFullYear()}-${String(caseNumber).padStart(3, "0")}`;
 
-    const result = await pool.query(
+    await insert(
       `INSERT INTO cases (case_id, title, description, priority, assigned_to, created_by, status)
-       VALUES ($1, $2, $3, $4, $5, $6, 'Pending')
-       RETURNING *`,
+       VALUES (?, ?, ?, ?, ?, ?, 'Pending')`,
       [case_id, title, description || null, priority || "Medium", assigned_to || null, created_by || "System"]
     );
 
     // Log to audit trail
-    await pool.query(
+    await insert(
       `INSERT INTO audit_trail (entry_id, action, actor, target_type, target_id, details, verified)
-       VALUES ($1, $2, $3, $4, $5, $6, true)`,
-      [
-        `AUDIT-${Date.now()}`,
-        "Case Created",
-        created_by || "System",
-        "Case",
-        case_id,
-        `New case created: ${title}`,
-      ]
+       VALUES (?, ?, ?, ?, ?, ?, TRUE)`,
+      [`AUDIT-${Date.now()}`, "Case Created", created_by || "System", "Case", case_id, `New case created: ${title}`]
     );
 
+    const rows = await query<Case>("SELECT * FROM cases WHERE case_id = ?", [case_id]);
     const response: ApiResponse<Case> = {
       success: true,
-      data: result.rows[0] as Case,
+      data: rows[0],
       message: "Case created successfully",
     };
     res.status(201).json(response);
@@ -103,44 +85,24 @@ router.put(
 
     const updates: string[] = [];
     const values: any[] = [];
-    let paramCount = 1;
 
-    if (title !== undefined) {
-      updates.push(`title = $${paramCount++}`);
-      values.push(title);
-    }
-    if (description !== undefined) {
-      updates.push(`description = $${paramCount++}`);
-      values.push(description);
-    }
-    if (status !== undefined) {
-      updates.push(`status = $${paramCount++}`);
-      values.push(status);
-    }
-    if (priority !== undefined) {
-      updates.push(`priority = $${paramCount++}`);
-      values.push(priority);
-    }
-    if (assigned_to !== undefined) {
-      updates.push(`assigned_to = $${paramCount++}`);
-      values.push(assigned_to);
-    }
+    if (title !== undefined)       { updates.push("title = ?");       values.push(title); }
+    if (description !== undefined) { updates.push("description = ?"); values.push(description); }
+    if (status !== undefined)      { updates.push("status = ?");      values.push(status); }
+    if (priority !== undefined)    { updates.push("priority = ?");    values.push(priority); }
+    if (assigned_to !== undefined) { updates.push("assigned_to = ?"); values.push(assigned_to); }
 
-    updates.push(`updated_date = CURRENT_TIMESTAMP`);
+    if (updates.length === 0) throw new ApiError(400, "No fields to update");
+
     values.push(caseId);
+    await query(`UPDATE cases SET ${updates.join(", ")} WHERE case_id = ?`, values);
 
-    const result = await pool.query(
-      `UPDATE cases SET ${updates.join(", ")} WHERE case_id = $${paramCount} RETURNING *`,
-      values
-    );
-
-    if (result.rows.length === 0) {
-      throw new ApiError(404, `Case ${caseId} not found`);
-    }
+    const rows = await query<Case>("SELECT * FROM cases WHERE case_id = ?", [caseId]);
+    if (rows.length === 0) throw new ApiError(404, `Case ${caseId} not found`);
 
     const response: ApiResponse<Case> = {
       success: true,
-      data: result.rows[0] as Case,
+      data: rows[0],
       message: "Case updated successfully",
     };
     res.json(response);
@@ -152,19 +114,11 @@ router.delete(
   "/:caseId",
   asyncHandler(async (req: Request, res: Response) => {
     const { caseId } = req.params;
+    const rows = await query<Case>("SELECT * FROM cases WHERE case_id = ?", [caseId]);
+    if (rows.length === 0) throw new ApiError(404, `Case ${caseId} not found`);
 
-    const result = await pool.query("DELETE FROM cases WHERE case_id = $1 RETURNING *", [
-      caseId,
-    ]);
-
-    if (result.rows.length === 0) {
-      throw new ApiError(404, `Case ${caseId} not found`);
-    }
-
-    const response: ApiResponse<any> = {
-      success: true,
-      message: "Case deleted successfully",
-    };
+    await query("DELETE FROM cases WHERE case_id = ?", [caseId]);
+    const response: ApiResponse<any> = { success: true, message: "Case deleted successfully" };
     res.json(response);
   })
 );
@@ -175,28 +129,24 @@ router.get(
   asyncHandler(async (req: Request, res: Response) => {
     const { caseId } = req.params;
 
-    const [caseResult, evidenceResult, assignmentResult] = await Promise.all([
-      pool.query("SELECT * FROM cases WHERE case_id = $1", [caseId]),
-      pool.query("SELECT COUNT(*) as count FROM evidence WHERE case_id = $1", [caseId]),
-      pool.query(
-        `SELECT COUNT(*) as count FROM case_assignments WHERE case_id = $1 AND status = 'Active'`,
+    const [caseRows, evidenceRows, assignmentRows] = await Promise.all([
+      query("SELECT * FROM cases WHERE case_id = ?", [caseId]),
+      query<{ count: number }>("SELECT COUNT(*) as count FROM evidence WHERE case_id = ?", [caseId]),
+      query<{ count: number }>(
+        "SELECT COUNT(*) as count FROM case_assignments WHERE case_id = ? AND status = 'Active'",
         [caseId]
       ),
     ]);
 
-    if (caseResult.rows.length === 0) {
-      throw new ApiError(404, `Case ${caseId} not found`);
-    }
-
-    const stats = {
-      case: caseResult.rows[0],
-      evidence_count: evidenceResult.rows[0].count,
-      active_assignments: assignmentResult.rows[0].count,
-    };
+    if (caseRows.length === 0) throw new ApiError(404, `Case ${caseId} not found`);
 
     const response: ApiResponse<any> = {
       success: true,
-      data: stats,
+      data: {
+        case: caseRows[0],
+        evidence_count: evidenceRows[0].count,
+        active_assignments: assignmentRows[0].count,
+      },
     };
     res.json(response);
   })

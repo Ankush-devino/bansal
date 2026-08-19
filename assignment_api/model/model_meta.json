@@ -1,0 +1,24 @@
+{
+  "algorithm": "GradientBoostingRegressor",
+  "n_estimators": 300,
+  "learning_rate": 0.08,
+  "mae": 2.065,
+  "r2": 0.9403,
+  "features": [
+    "specialization_match",
+    "workload_free_pct",
+    "success_rate",
+    "proximity_score",
+    "experience_years",
+    "complexity_numeric",
+    "priority_numeric",
+    "caseload"
+  ],
+  "n_training_samples": 8000,
+  "weights": {
+    "specialization": 35,
+    "workload": 25,
+    "success_rate": 25,
+    "geographic_proximity": 15
+  }
+}

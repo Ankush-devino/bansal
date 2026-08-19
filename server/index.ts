@@ -1,7 +1,7 @@
 import express, { Express } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import { initializeDatabase } from "./db";
+import { initializeDatabase, query } from "./db";
 import { errorHandler } from "./middleware/errorHandler";
 import casesRouter from "./routes/cases";
 import evidenceRouter from "./routes/evidence";
@@ -38,34 +38,32 @@ export function createServer(): Express {
   // Dashboard statistics endpoint
   app.get("/api/dashboard/stats", async (req, res) => {
     try {
-      const db = (await import("./db")).default;
-
       const [casesResult, evidenceResult, patternResult, auditResult] = await Promise.all([
-        db.query(
-          `SELECT 
+        query<any>(
+          `SELECT
             COUNT(*) as total,
             SUM(CASE WHEN status = 'In Progress' THEN 1 ELSE 0 END) as active,
             SUM(CASE WHEN status = 'Completed' THEN 1 ELSE 0 END) as completed,
             AVG(resolution_time_days) as avg_time
           FROM cases`
         ),
-        db.query("SELECT COUNT(*) as total FROM evidence"),
-        db.query(
-          "SELECT COUNT(*) as today FROM pattern_matches WHERE DATE(created_date) = CURRENT_DATE"
+        query<{ total: number }>("SELECT COUNT(*) as total FROM evidence"),
+        query<{ today: number }>(
+          "SELECT COUNT(*) as today FROM pattern_matches WHERE DATE(created_date) = CURDATE()"
         ),
-        db.query(
-          "SELECT COUNT(*) as verified FROM audit_trail WHERE verified = true"
+        query<{ verified: number }>(
+          "SELECT COUNT(*) as verified FROM audit_trail WHERE verified = TRUE"
         ),
       ]);
 
       const stats = {
-        total_cases: casesResult.rows[0].total,
-        active_cases: casesResult.rows[0].active,
-        completed_cases: casesResult.rows[0].completed,
-        total_evidence: evidenceResult.rows[0].total,
-        pattern_matches_today: patternResult.rows[0].today,
-        blockchain_verified_entries: auditResult.rows[0].verified,
-        average_resolution_time: casesResult.rows[0].avg_time,
+        total_cases: casesResult[0].total,
+        active_cases: casesResult[0].active,
+        completed_cases: casesResult[0].completed,
+        total_evidence: evidenceResult[0].total,
+        pattern_matches_today: patternResult[0].today,
+        blockchain_verified_entries: auditResult[0].verified,
+        average_resolution_time: casesResult[0].avg_time,
       };
 
       res.json({ success: true, data: stats });
@@ -82,11 +80,11 @@ export function createServer(): Express {
 }
 
 // Insert sample data
-async function insertSampleData(db: any) {
+async function insertSampleData() {
   try {
     // Check if data already exists
-    const existingOfficers = await db.query("SELECT COUNT(*) as count FROM officers");
-    if (existingOfficers.rows[0].count > 0) {
+    const existingOfficers = await query<{ count: number }>("SELECT COUNT(*) as count FROM officers");
+    if (Number(existingOfficers[0].count) > 0) {
       console.log("Sample data already exists");
       return;
     }
@@ -125,18 +123,10 @@ async function insertSampleData(db: any) {
     ];
 
     for (const officer of officers) {
-      await db.query(
-        `INSERT INTO officers (officer_id, name, specialization, email, location, experience_years, success_rate)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [
-          officer.officer_id,
-          officer.name,
-          officer.specialization,
-          officer.email,
-          officer.location,
-          officer.experience_years,
-          officer.success_rate,
-        ]
+      await query(
+        `INSERT IGNORE INTO officers (officer_id, name, specialization, email, location, experience_years, success_rate)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [officer.officer_id, officer.name, officer.specialization, officer.email, officer.location, officer.experience_years, officer.success_rate]
       );
     }
 
@@ -163,18 +153,10 @@ async function insertSampleData(db: any) {
     ];
 
     for (const caseData of cases) {
-      await db.query(
-        `INSERT INTO cases (case_id, title, description, priority, assigned_to, status, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [
-          caseData.case_id,
-          caseData.title,
-          caseData.description,
-          caseData.priority,
-          caseData.assigned_to,
-          caseData.status,
-          caseData.created_by,
-        ]
+      await query(
+        `INSERT IGNORE INTO cases (case_id, title, description, priority, assigned_to, status, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [caseData.case_id, caseData.title, caseData.description, caseData.priority, caseData.assigned_to, caseData.status, caseData.created_by]
       );
     }
 
@@ -194,8 +176,7 @@ async function startServer() {
         console.log("Database initialized successfully");
 
         // Insert sample data for demonstration
-        const db = (await import("./db")).default;
-        await insertSampleData(db);
+        await insertSampleData();
       } catch (error) {
         console.warn("Database initialization skipped:", error instanceof Error ? error.message : error);
       }
@@ -215,10 +196,7 @@ async function startServer() {
   }
 }
 
-// Handle graceful shutdown
-process.on("SIGTERM", () => {
-  console.log("SIGTERM received, shutting down gracefully");
-  process.exit(0);
-});
-
-startServer();
+// Server initialization (only runs when executed directly)
+if (process.argv[1] && (process.argv[1].endsWith("server/index.ts") || process.argv[1].endsWith("server\\index.ts") || process.argv[1].endsWith("node-build.mjs"))) {
+  startServer();
+}

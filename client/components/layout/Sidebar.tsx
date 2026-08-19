@@ -16,6 +16,8 @@ const sidebarItems: SidebarItem[] = [
   { id: "reports", label: "Reports", icon: "📄", path: "/reports" },
   { id: "audit", label: "Audit Trail", icon: "⛓️", path: "/audit" },
   { id: "collaboration", label: "Collaboration", icon: "👥", path: "/collaboration" },
+  { id: "crime-scene", label: "Crime Scene", icon: "🏗️", path: "/crime-scene" },
+  { id: "deepfake", label: "Deepfake", icon: "🤖", path: "/deepfake-detection" },
 ];
 
 export function Sidebar() {

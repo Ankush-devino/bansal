@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import pool from "../db";
+import { query, insert } from "../db";
 import { asyncHandler, ApiError } from "../middleware/errorHandler";
 import { Evidence, ApiResponse } from "@shared/types";
 
@@ -10,30 +10,16 @@ router.get(
   "/",
   asyncHandler(async (req: Request, res: Response) => {
     const { case_id, type, status } = req.query;
-    let query = "SELECT * FROM evidence WHERE 1=1";
+    let sql = "SELECT * FROM evidence WHERE 1=1";
     const params: any[] = [];
-    let paramCount = 1;
 
-    if (case_id) {
-      query += ` AND case_id = $${paramCount++}`;
-      params.push(case_id);
-    }
-    if (type) {
-      query += ` AND type = $${paramCount++}`;
-      params.push(type);
-    }
-    if (status) {
-      query += ` AND status = $${paramCount++}`;
-      params.push(status);
-    }
+    if (case_id) { sql += " AND case_id = ?"; params.push(case_id); }
+    if (type)    { sql += " AND type = ?";    params.push(type); }
+    if (status)  { sql += " AND status = ?";  params.push(status); }
+    sql += " ORDER BY uploaded_date DESC";
 
-    query += " ORDER BY uploaded_date DESC";
-
-    const result = await pool.query(query, params);
-    const response: ApiResponse<Evidence[]> = {
-      success: true,
-      data: result.rows as Evidence[],
-    };
+    const rows = await query<Evidence>(sql, params);
+    const response: ApiResponse<Evidence[]> = { success: true, data: rows };
     res.json(response);
   })
 );
@@ -43,19 +29,13 @@ router.get(
   "/:evidenceId",
   asyncHandler(async (req: Request, res: Response) => {
     const { evidenceId } = req.params;
+    const rows = await query<Evidence>(
+      "SELECT * FROM evidence WHERE evidence_id = ?",
+      [evidenceId]
+    );
+    if (rows.length === 0) throw new ApiError(404, `Evidence ${evidenceId} not found`);
 
-    const result = await pool.query("SELECT * FROM evidence WHERE evidence_id = $1", [
-      evidenceId,
-    ]);
-
-    if (result.rows.length === 0) {
-      throw new ApiError(404, `Evidence ${evidenceId} not found`);
-    }
-
-    const response: ApiResponse<Evidence> = {
-      success: true,
-      data: result.rows[0] as Evidence,
-    };
+    const response: ApiResponse<Evidence> = { success: true, data: rows[0] };
     res.json(response);
   })
 );
@@ -66,53 +46,53 @@ router.post(
   asyncHandler(async (req: Request, res: Response) => {
     const { case_id, type, description, uploaded_by } = req.body;
 
-    if (!case_id || !type) {
-      throw new ApiError(400, "case_id and type are required");
-    }
+    if (!case_id || !type) throw new ApiError(400, "case_id and type are required");
 
     // Verify case exists
-    const caseResult = await pool.query("SELECT * FROM cases WHERE case_id = $1", [case_id]);
-    if (caseResult.rows.length === 0) {
-      throw new ApiError(404, `Case ${case_id} not found`);
-    }
+    const caseRows = await query("SELECT case_id FROM cases WHERE case_id = ?", [case_id]);
+    if (caseRows.length === 0) throw new ApiError(404, `Case ${case_id} not found`);
 
     // Generate evidence ID
-    const evidenceCountResult = await pool.query(
-      "SELECT COUNT(*) as count FROM evidence WHERE case_id = $1",
+    const countRows = await query<{ count: number }>(
+      "SELECT COUNT(*) as count FROM evidence WHERE case_id = ?",
       [case_id]
     );
-    const evidenceNumber = (evidenceCountResult.rows[0].count as number) + 1;
+    const evidenceNumber = Number(countRows[0].count) + 1;
     const evidence_id = `${case_id}-EV-${String(evidenceNumber).padStart(3, "0")}`;
 
-    const result = await pool.query(
+    await insert(
       `INSERT INTO evidence (evidence_id, case_id, type, description, uploaded_by, status)
-       VALUES ($1, $2, $3, $4, $5, 'Pending Analysis')
-       RETURNING *`,
+       VALUES (?, ?, ?, ?, ?, 'Pending Analysis')`,
       [evidence_id, case_id, type, description || null, uploaded_by || "System"]
     );
 
     // Update case evidence count
-    await pool.query("UPDATE cases SET evidence_count = evidence_count + 1 WHERE case_id = $1", [
-      case_id,
-    ]);
+    await query(
+      "UPDATE cases SET evidence_count = evidence_count + 1 WHERE case_id = ?",
+      [case_id]
+    );
 
     // Log to audit trail
-    await pool.query(
+    await insert(
       `INSERT INTO audit_trail (entry_id, action, actor, target_type, target_id, details, verified)
-       VALUES ($1, $2, $3, $4, $5, $6, true)`,
+       VALUES (?, ?, ?, ?, ?, ?, TRUE)`,
       [
         `AUDIT-${Date.now()}`,
         "Evidence Uploaded",
         uploaded_by || "System",
         "Evidence",
         evidence_id,
-        `Evidence uploaded: ${type}`,
+        `Evidence uploaded: ${type} for case ${case_id}`,
       ]
     );
 
+    const rows = await query<Evidence>(
+      "SELECT * FROM evidence WHERE evidence_id = ?",
+      [evidence_id]
+    );
     const response: ApiResponse<Evidence> = {
       success: true,
-      data: result.rows[0] as Evidence,
+      data: rows[0],
       message: "Evidence uploaded successfully",
     };
     res.status(201).json(response);
@@ -126,21 +106,22 @@ router.put(
     const { evidenceId } = req.params;
     const { analysis_status, confidence_score, blockchain_hash } = req.body;
 
-    const result = await pool.query(
-      `UPDATE evidence 
-       SET analysis_status = $1, confidence_score = $2, status = 'Analyzed', blockchain_hash = $3
-       WHERE evidence_id = $4
-       RETURNING *`,
+    await query(
+      `UPDATE evidence
+       SET analysis_status = ?, confidence_score = ?, status = 'Analyzed', blockchain_hash = ?
+       WHERE evidence_id = ?`,
       [analysis_status || null, confidence_score || null, blockchain_hash || null, evidenceId]
     );
 
-    if (result.rows.length === 0) {
-      throw new ApiError(404, `Evidence ${evidenceId} not found`);
-    }
+    const rows = await query<Evidence>(
+      "SELECT * FROM evidence WHERE evidence_id = ?",
+      [evidenceId]
+    );
+    if (rows.length === 0) throw new ApiError(404, `Evidence ${evidenceId} not found`);
 
     const response: ApiResponse<Evidence> = {
       success: true,
-      data: result.rows[0] as Evidence,
+      data: rows[0],
       message: "Evidence analysis updated",
     };
     res.json(response);
@@ -152,20 +133,11 @@ router.delete(
   "/:evidenceId",
   asyncHandler(async (req: Request, res: Response) => {
     const { evidenceId } = req.params;
+    const rows = await query("SELECT evidence_id FROM evidence WHERE evidence_id = ?", [evidenceId]);
+    if (rows.length === 0) throw new ApiError(404, `Evidence ${evidenceId} not found`);
 
-    const result = await pool.query(
-      "DELETE FROM evidence WHERE evidence_id = $1 RETURNING *",
-      [evidenceId]
-    );
-
-    if (result.rows.length === 0) {
-      throw new ApiError(404, `Evidence ${evidenceId} not found`);
-    }
-
-    const response: ApiResponse<any> = {
-      success: true,
-      message: "Evidence deleted successfully",
-    };
+    await query("DELETE FROM evidence WHERE evidence_id = ?", [evidenceId]);
+    const response: ApiResponse<any> = { success: true, message: "Evidence deleted successfully" };
     res.json(response);
   })
 );

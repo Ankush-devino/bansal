@@ -1,39 +1,47 @@
-import { defineConfig, Plugin } from "vite";
+import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
-import { createServer } from "./server";
 
 // https://vitejs.dev/config/
-export default defineConfig(({ mode }) => ({
+export default defineConfig(() => ({
   server: {
-    host: "::",
-    port: 8080,
-    fs: {
-      allow: [".","./client", "./shared"],
-      deny: [".env", ".env.*", "*.{crt,pem}", "**/.git/**", "server/**"],
+    host: "localhost",
+    port: 3000,
+    open: true,
+    // Eagerly transform entry files so first page load is instant
+    warmup: {
+      clientFiles: [
+        "./client/App.tsx",
+        "./client/pages/Index.tsx",
+        "./client/pages/Dashboard.tsx",
+        "./client/components/layout/Sidebar.tsx",
+        "./client/components/layout/Navbar.tsx",
+      ],
     },
   },
   build: {
     outDir: "dist/spa",
   },
-  plugins: [react(), expressPlugin()],
+  plugins: [react()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./client"),
       "@shared": path.resolve(__dirname, "./shared"),
     },
   },
+  // Pre-bundle heavy deps so startup is fast after the first run
+  optimizeDeps: {
+    include: [
+      "react",
+      "react-dom",
+      "react-router-dom",
+      "framer-motion",
+      "three",
+      "@react-three/fiber",
+      "@react-three/drei",
+      "lucide-react",
+      "@tanstack/react-query",
+      "recharts",
+    ],
+  },
 }));
-
-function expressPlugin(): Plugin {
-  return {
-    name: "express-plugin",
-    apply: "serve", // Only apply during development (serve mode)
-    configureServer(server) {
-      const app = createServer();
-
-      // Add Express app as middleware to Vite dev server
-      server.middlewares.use(app);
-    },
-  };
-}

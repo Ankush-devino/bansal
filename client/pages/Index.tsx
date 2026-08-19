@@ -7,17 +7,31 @@ export default function Index() {
   const features = [
     {
       id: 1,
-      icon: "🔍",
-      title: "Automated Duplicate Detection",
+      icon: "🏗️",
+      title: "Crime Scene Reconstruction",
       description:
-        "AI-powered system identifies duplicate or similar evidence across cases, revealing patterns and potential serial offenders.",
+        "Upload crime scene photos to generate immersive 3D reconstructions, measure spatial distances, and pinpoint evidence locations.",
+      bullets: [
+        "Upload crime scene photos",
+        "Generate a 3D reconstruction",
+        "Measure distances",
+        "Mark evidence locations",
+      ],
+      route: "/crime-scene",
     },
     {
       id: 2,
-      icon: "⏱️",
-      title: "Predictive Resolution Timeline",
+      icon: "🔍",
+      title: "Deepfake Detection",
       description:
-        "ML models estimate case completion time based on evidence type, complexity, and historical data.",
+        "Advanced neural networks analyze digital media to detect AI manipulation, synthetic faces, and deepfake audio or video.",
+      bullets: [
+        "Image & video analysis",
+        "EfficientNet-B0 neural network",
+        "Grad-CAM heatmap visualization",
+        "Frame-by-frame video scan",
+      ],
+      route: "/deepfake-detection",
     },
     {
       id: 3,
@@ -194,10 +208,27 @@ export default function Index() {
 
           <div className="grid grid-cols-4 gap-xl">
             {features.map((feature) => (
-              <div key={feature.id} className="feature-card">
+              <div
+                key={feature.id}
+                className={`feature-card${feature.route ? " feature-card-link" : ""}`}
+                onClick={() => feature.route && navigate(feature.route)}
+                style={{ cursor: feature.route ? "pointer" : "default" }}
+              >
                 <div className="feature-icon">{feature.icon}</div>
                 <h3>{feature.title}</h3>
                 <p>{feature.description}</p>
+                {feature.bullets && (
+                  <ul className="feature-bullets">
+                    {feature.bullets.map((bullet, idx) => (
+                      <li key={idx}>
+                        <span className="bullet-dot">•</span> {bullet}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {feature.route && (
+                  <div className="feature-open-btn">Open Tool →</div>
+                )}
               </div>
             ))}
           </div>

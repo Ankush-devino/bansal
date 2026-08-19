@@ -24,4 +24,42 @@ dist-ssr
 *.sw?
 
 .config/
-!.env
+.env
+.env.*
+!.env.example
+
+# Python & AI
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+.venv/
+env/
+ENV/
+*.pt
+*.pth
+*.h5
+*.keras
+*.onnx
+
+# Dataset directories
+deepfake_api/data/
+biometric_api/data/
+assignment_api/data/
+
